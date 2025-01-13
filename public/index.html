@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OCR 文字朗讀工具</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="manifest" href="manifest.json">
+</head>
+<body>
+  <div class="container">
+    <h1>圖片文字朗讀工具</h1>
+    <div class="controls">
+      <button id="originalBtn" class="active">原文</button>
+      <button id="translateBtn">翻譯</button>
+      <button id="sentenceBtn">句子模式</button>
+    </div>
+    <input type="file" id="imageInput" accept="image/*" title="選擇圖片文件" placeholder="選擇圖片文件" aria-label="選擇要上傳的圖片文件">
+    
+    <div class="content-wrapper">
+      <div class="image-container">
+        <canvas id="imageCanvas"></canvas>
+        <div id="highlightLayer"></div>
+      </div>
+      
+      <div class="text-container">
+        <div id="result"></div>
+        <div id="translationResult" class="translation-box"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@2.1.4/dist/tesseract.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
