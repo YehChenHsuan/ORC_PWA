@@ -1,7 +1,5 @@
-require('dotenv').config();
-
 // 初始化Tesseract
-const worker = Tesseract.createWorker();
+let worker = null;
 
 // 狀態管理
 let currentMode = 'original'; // original | translate | sentence
@@ -12,52 +10,38 @@ let translationCache = {};
 
 // 註冊Service Worker
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/service-worker.js')
-      .then(registration => {
-        console.log('ServiceWorker 註冊成功: ', registration.scope);
-      })
-      .catch(err => {
-        console.log('ServiceWorker 註冊失敗: ', err);
-      });
+  window.addEventListener('load', async () => {
+    try {
+      const registration = await navigator.serviceWorker.register('/service-worker.js');
+      console.log('ServiceWorker 註冊成功: ', registration.scope);
+    } catch (err) {
+      console.log('ServiceWorker 註冊失敗: ', err);
+    }
   });
 }
 
 // 初始化UI元素
+const container = document.querySelector('.container');
 const loadingIndicator = document.createElement('div');
 loadingIndicator.className = 'loading-indicator';
 loadingIndicator.textContent = '處理中...';
-document.querySelector('.container').appendChild(loadingIndicator);
+container.appendChild(loadingIndicator);
 
 const errorMessage = document.createElement('div');
 errorMessage.className = 'error-message';
-document.querySelector('.container').appendChild(errorMessage);
+container.appendChild(errorMessage);
 
 // 初始化UI事件
-document.getElementById('originalBtn').addEventListener('click', () => {
-  setMode('original');
-});
-
-document.getElementById('translateBtn').addEventListener('click', () => {
-  setMode('translate');
-});
-
-document.getElementById('sentenceBtn').addEventListener('click', () => {
-  setMode('sentence');
-});
+document.getElementById('originalBtn').addEventListener('click', () => setMode('original'));
+document.getElementById('translateBtn').addEventListener('click', () => setMode('translate'));
+document.getElementById('sentenceBtn').addEventListener('click', () => setMode('sentence'));
 
 // 檢查語音功能支援
 if (!('speechSynthesis' in window)) {
   showError('您的瀏覽器不支援語音功能');
 }
 
-// 檢查API金鑰
-if (!process.env.GOOGLE_TRANSLATE_API_KEY) {
-  showError('請設定Google翻譯API金鑰');
-  document.getElementById('translateBtn').disabled = true;
-}
-
-// 圖片上傳處理
+// 初始化UI元素
 const imageInput = document.getElementById('imageInput');
 const resultDiv = document.getElementById('result');
 const translationResultDiv = document.getElementById('translationResult');
@@ -65,68 +49,51 @@ const canvas = document.getElementById('imageCanvas');
 const ctx = canvas.getContext('2d');
 const highlightLayer = document.getElementById('highlightLayer');
 
-// 改進圖片上傳處理
-imageInput.addEventListener('change', async (event) => {
+// 圖片上傳處理
+imageInput.addEventListener('change', handleImageUpload);
+
+// 圖片上傳處理函數
+async function handleImageUpload(event) {
   try {
     const file = event.target.files[0];
     if (!file) {
-      showError('請選擇有效的圖片文件');
-      return;
+      throw new Error('請選擇有效的圖片文件');
     }
 
-    // 檢查文件類型
     if (!file.type.startsWith('image/')) {
-      showError('請上傳圖片文件 (JPG, PNG, GIF 等)');
-      return;
+      throw new Error('請上傳圖片文件 (JPG, PNG, GIF 等)');
     }
 
-    // 顯示載入狀態
-    loadingIndicator.classList.add('visible');
-    errorMessage.classList.remove('visible');
-    resultDiv.innerHTML = '';
-    translationResultDiv.innerHTML = '';
-    clearHighlights();
-    disableButtons(true);
+    showLoading(true);
+    clearUI();
 
-    // 重置canvas
-    canvas.width = 0;
-    canvas.height = 0;
-    canvas.style.display = 'none';
-    // 載入圖片
     const img = await loadImage(file);
     drawImage(img);
-    canvas.classList.add('visible');
-    highlightLayer.classList.add('visible');
     
-    // 初始化Tesseract
-    await worker.load();
-    await worker.loadLanguage('eng');
-    await worker.initialize('eng');
+    if (!worker) {
+      worker = await initTesseract();
+    }
 
-    // 進行OCR識別
     const { data: { text, words } } = await worker.recognize(file);
     
-    // 處理識別結果
-    wordBoxes = words.map(word => ({
-      text: word.text,
-      bbox: word.bbox,
-      confidence: word.confidence
-    }));
+    processOCRResult(text, words);
     
-    // 分組句子
-    sentenceBoxes = groupWordsIntoSentences(wordBoxes);
-    
-    // 顯示結果
-    displayText(text);
-    updateHighlights();
   } catch (error) {
     console.error('OCR錯誤:', error);
-    showError('發生錯誤，請重試');
+    showError(error.message || '發生錯誤，請重試');
   } finally {
-    loadingIndicator.classList.remove('visible');
-    disableButtons(false);
+    showLoading(false);
   }
-});
+}
+
+// 初始化 Tesseract
+async function initTesseract() {
+  const worker = Tesseract.createWorker();
+  await worker.load();
+  await worker.loadLanguage('eng');
+  await worker.initialize('eng');
+  return worker;
+}
 
 // 圖片處理函數
 function loadImage(file) {
@@ -134,7 +101,7 @@ function loadImage(file) {
     const img = new Image();
     img.src = URL.createObjectURL(file);
     img.onload = () => resolve(img);
-    img.onerror = reject;
+    img.onerror = () => reject(new Error('圖片載入失敗'));
   });
 }
 
@@ -142,7 +109,6 @@ function drawImage(img) {
   const maxWidth = 800;
   const maxHeight = 600;
   
-  // 計算縮放比例
   const scale = Math.min(maxWidth / img.width, maxHeight / img.height);
   imageScale = scale;
   
@@ -150,14 +116,54 @@ function drawImage(img) {
   canvas.height = img.height * scale;
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
   
-    // 顯示canvas
-    canvas.classList.add('visible');
+  canvas.classList.add('visible');
+  highlightLayer.classList.add('visible');
 }
 
-// 文字處理函數
+// OCR 結果處理
+function processOCRResult(text, words) {
+  wordBoxes = words.map(word => ({
+    text: word.text,
+    bbox: word.bbox,
+    confidence: word.confidence
+  }));
+  
+  sentenceBoxes = groupWordsIntoSentences(wordBoxes);
+  displayText(text);
+  updateHighlights();
+}
+
+// 句子分組邏輯
 function groupWordsIntoSentences(words) {
-  // 實現句子分組邏輯
-  // ...
+  const sentences = [];
+  let currentSentence = {
+    text: '',
+    bbox: { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity },
+    words: []
+  };
+
+  words.forEach((word, index) => {
+    currentSentence.words.push(word);
+    currentSentence.text += (currentSentence.text ? ' ' : '') + word.text;
+    
+    // 更新邊界框
+    currentSentence.bbox.x0 = Math.min(currentSentence.bbox.x0, word.bbox.x0);
+    currentSentence.bbox.y0 = Math.min(currentSentence.bbox.y0, word.bbox.y0);
+    currentSentence.bbox.x1 = Math.max(currentSentence.bbox.x1, word.bbox.x1);
+    currentSentence.bbox.y1 = Math.max(currentSentence.bbox.y1, word.bbox.y1);
+
+    // 檢查是否為句子結尾
+    if (word.text.match(/[.!?]$/) || index === words.length - 1) {
+      sentences.push({ ...currentSentence });
+      currentSentence = {
+        text: '',
+        bbox: { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity },
+        words: []
+      };
+    }
+  });
+
+  return sentences;
 }
 
 function displayText(text) {
@@ -189,6 +195,27 @@ function updateHighlights() {
     div.addEventListener('click', () => handleBoxClick(box));
     highlightLayer.appendChild(div);
   });
+}
+
+// UI 相關函數
+function showLoading(show) {
+  if (show) {
+    loadingIndicator.classList.add('visible');
+    disableButtons(true);
+  } else {
+    loadingIndicator.classList.remove('visible');
+    disableButtons(false);
+  }
+}
+
+function clearUI() {
+  resultDiv.innerHTML = '';
+  translationResultDiv.innerHTML = '';
+  clearHighlights();
+  canvas.width = 0;
+  canvas.height = 0;
+  canvas.style.display = 'none';
+  errorMessage.classList.remove('visible');
 }
 
 function clearHighlights() {
@@ -236,31 +263,22 @@ async function translateText(text) {
     return translationCache[text];
   }
 
-  const apiKey = process.env.GOOGLE_TRANSLATE_API_KEY;
-  const url = `https://translation.googleapis.com/language/translate/v2?key=${apiKey}`;
-
   try {
-    const response = await fetch(url, {
+    const response = await fetch('/api/translate', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        q: text,
-        source: 'en',
-        target: 'zh-TW',
-        format: 'text'
-      })
+      body: JSON.stringify({ text })
     });
 
-    const data = await response.json();
-    if (data.error) {
-      throw new Error(data.error.message);
+    if (!response.ok) {
+      throw new Error('翻譯服務暫時無法使用');
     }
 
-    const translation = data.data.translations[0].translatedText;
-    translationCache[text] = translation;
-    return translation;
+    const data = await response.json();
+    translationCache[text] = data.translation;
+    return data.translation;
   } catch (error) {
     console.error('翻譯API錯誤:', error);
     throw error;
@@ -301,7 +319,7 @@ function setMode(mode) {
   updateHighlights();
 }
 
-// 顯示錯誤訊息
+// 錯誤處理
 function showError(message) {
   errorMessage.textContent = message;
   errorMessage.classList.add('visible');
