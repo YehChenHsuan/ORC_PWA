@@ -1,0 +1,39 @@
+const express = require('express');
+const path = require('path');
+const compression = require('compression');
+const helmet = require('helmet');
+const cors = require('cors');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// 安全相關 HTTP 標頭
+app.use(helmet());
+
+// 啟用 CORS
+app.use(cors());
+
+// 啟用 gzip 壓縮
+app.use(compression());
+
+// 設定靜態檔案目錄
+app.use(express.static(__dirname));
+
+// 錯誤處理中間件
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({ 
+    error: '伺服器發生錯誤',
+    message: process.env.NODE_ENV === 'production' ? '發生錯誤，請稍後再試' : err.message
+  });
+});
+
+// 處理所有路由
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+// 啟動伺服器
+app.listen(PORT, () => {
+  console.log(`伺服器運行在 http://localhost:${PORT}`);
+});
